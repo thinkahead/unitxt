@@ -1,6 +1,7 @@
 import hashlib
 import inspect
 import json
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
@@ -36,6 +37,31 @@ settings = get_settings()
 def short_hex_hash(value, length=8):
     h = hashlib.sha256(value.encode()).hexdigest()  # Full 64-character hex
     return h[:length]
+
+
+def _is_http_error_retryable(exception):
+    """Check if an exception is an HTTP error with status code >= 400."""
+    error_message = str(exception)
+
+    # Check for "400 Bad Request" or similar HTTP error patterns
+    if "400 Bad Request" in error_message or "400 bad request" in error_message.lower():
+        return True
+
+    # Check for other HTTP error codes >= 400
+    # Common patterns: "XXX Error", "HTTP XXX", "Status XXX"
+    import re
+    http_error_pattern = r'(?:HTTP\s+)?(\d{3})(?:\s+|$)'
+    matches = re.findall(http_error_pattern, error_message, re.IGNORECASE)
+
+    for match in matches:
+        try:
+            status_code = int(match)
+            if status_code >= 400:
+                return True
+        except ValueError:
+            continue
+
+    return False
 
 
 def _get_recipe_from_query(
@@ -289,9 +315,38 @@ def load_dataset(
     if use_cache is None:
         use_cache = settings.dataset_cache_default
 
-    dataset = _source_to_dataset(
-        source=recipe, split=split, use_cache=use_cache, streaming=streaming
-    )
+    # Retry logic for HTTP errors >= 400
+    max_retries = 10
+    retry_delay = 10  # seconds
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            dataset = _source_to_dataset(
+                source=recipe, split=split, use_cache=use_cache, streaming=streaming
+            )
+            break  # Success, exit retry loop
+        except Exception as e:
+            last_exception = e
+            if _is_http_error_retryable(e):
+                if attempt < max_retries - 1:  # Don't sleep on last attempt
+                    logger.warning(
+                        f"HTTP error detected (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(
+                        f"HTTP error persisted after {max_retries} attempts: {e}"
+                    )
+                    raise
+            else:
+                # Not an HTTP error, raise immediately
+                raise
+    else:
+        # This should not be reached, but for safety
+        if last_exception:
+            raise last_exception
 
     frame = inspect.currentframe()
     args, _, _, values = inspect.getargvalues(frame)
