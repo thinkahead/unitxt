@@ -3058,17 +3058,61 @@ class VLLMInferenceEngine(InferenceEngine, PackageRequirementsMixin, VLLMParamsM
 
         self.sampling_params = SamplingParams(**args)
         tp = os.getenv("VLLM_TP_SIZE", 1)
-        self.llm = LLM(
-            model=self.model,
-            trust_remote_code=True,
-            max_num_batched_tokens=32768,
-            gpu_memory_utilization=0.7,
-            max_model_len=32768,
-            max_num_seqs=64,
-            enforce_eager=True,
-            dtype="bfloat16",
-            tensor_parallel_size=int(tp),
-        )
+
+        # Retry logic for CUDA errors during vLLM initialization
+        max_retries = 10
+        retry_delay = 10  # seconds
+        logger = get_logger()
+
+        for attempt in range(max_retries):
+            try:
+                self.llm = LLM(
+                    model=self.model,
+                    trust_remote_code=True,
+                    max_num_batched_tokens=32768,
+                    gpu_memory_utilization=0.7,
+                    max_model_len=32768,
+                    max_num_seqs=64,
+                    enforce_eager=True,
+                    dtype="bfloat16",
+                    tensor_parallel_size=int(tp),
+                )
+                break  # Success, exit retry loop
+            except RuntimeError as e:
+                error_message = str(e)
+                # Check for CUDA errors
+                if "CUDA error" in error_message or "cudaError" in error_message or "Worker failed" in error_message:
+                    if attempt < max_retries - 1:  # Don't sleep on last attempt
+                        logger.warning(
+                            f"CUDA/vLLM initialization error (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {retry_delay} seconds..."
+                        )
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(
+                            f"CUDA/vLLM initialization error persisted after {max_retries} attempts: {e}"
+                        )
+                        raise
+                else:
+                    # Not a CUDA error, raise immediately
+                    raise
+            except Exception as e:
+                # For other exceptions, check if they might be related to vLLM initialization failures
+                error_message = str(e)
+                if "illegal memory access" in error_message.lower() or "engine" in error_message.lower():
+                    if attempt < max_retries - 1:
+                        logger.warning(
+                            f"vLLM initialization error (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {retry_delay} seconds..."
+                        )
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(
+                            f"vLLM initialization error persisted after {max_retries} attempts: {e}"
+                        )
+                        raise
+                else:
+                    raise
 
     def _infer(
         self,
