@@ -53,6 +53,14 @@ from .settings_utils import get_constants, get_settings
 from .type_utils import isoftype
 from .utils import retry_connection_with_exponential_backoff
 
+try:
+    from ibm_watsonx_ai.wml_client_error import ApiRequestFailure
+
+    _wml_retry_exceptions = (ConnectionError, TimeoutError, ApiRequestFailure)
+except ImportError:
+    ApiRequestFailure = None
+    _wml_retry_exceptions = (ConnectionError, TimeoutError)
+
 constants = get_constants()
 settings = get_settings()
 logger = get_logger()
@@ -2467,6 +2475,10 @@ class WMLInferenceEngineGeneration(WMLInferenceEngineBase, WMLGenerationParamsMi
             "return_options": logprobs_return_options,
         }
 
+    @retry_connection_with_exponential_backoff(
+        backoff_factor=2,
+        retry_exceptions=_wml_retry_exceptions,
+    )
     def _send_requests(
         self,
         dataset: Union[List[Dict[str, Any]], Dataset],
@@ -2733,6 +2745,10 @@ class WMLInferenceEngineChat(WMLInferenceEngineBase, WMLChatParamsMixin):
 
         return results
 
+    @retry_connection_with_exponential_backoff(
+        backoff_factor=2,
+        retry_exceptions=_wml_retry_exceptions,
+    )
     def _send_requests(
         self,
         dataset: Union[List[Dict[str, Any]], Dataset],
