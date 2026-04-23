@@ -40,11 +40,31 @@ def short_hex_hash(value, length=8):
 
 
 def _is_http_error_retryable(exception):
-    """Check if an exception is an HTTP error with status code >= 400."""
+    """Check if an exception is an HTTP error or transient connection failure."""
     error_message = str(exception)
+    error_message_lower = error_message.lower().strip()
+
+    # An empty or null error body typically indicates a transient service failure
+    if error_message_lower in ("", "none", "null", "<null>"):
+        return True
+
+    # Check for common transient connection error patterns
+    transient_patterns = [
+        "connection refused",
+        "connection reset",
+        "connect error",
+        "upstream connect error",
+        "disconnect/reset before headers",
+        "unavailable",
+        "connection timed out",
+        "remote connection failure",
+    ]
+    for pattern in transient_patterns:
+        if pattern in error_message_lower:
+            return True
 
     # Check for "400 Bad Request" or similar HTTP error patterns
-    if "400 Bad Request" in error_message or "400 bad request" in error_message.lower():
+    if "400 bad request" in error_message_lower:
         return True
 
     # Check for other HTTP error codes >= 400
@@ -60,6 +80,19 @@ def _is_http_error_retryable(exception):
                 return True
         except ValueError:
             continue
+
+    # Also walk the exception chain for retryable causes
+    current_exc = exception.__cause__ or exception.__context__
+    visited = {id(exception)}
+    while current_exc is not None and id(current_exc) not in visited:
+        visited.add(id(current_exc))
+        if isinstance(current_exc, (ConnectionError, TimeoutError)):
+            return True
+        exc_str = str(current_exc).lower()
+        for pattern in transient_patterns:
+            if pattern in exc_str:
+                return True
+        current_exc = current_exc.__cause__ or current_exc.__context__
 
     return False
 
