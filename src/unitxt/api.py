@@ -48,9 +48,9 @@ def _is_http_error_retryable(exception):
         return True
 
     # Check for other HTTP error codes >= 400
-    # Common patterns: "XXX Error", "HTTP XXX", "Status XXX"
+    # Common patterns: "XXX Error", "HTTP XXX", "Status XXX", "RESTError XXX:"
     import re
-    http_error_pattern = r'(?:HTTP\s+)?(\d{3})(?:\s+|$)'
+    http_error_pattern = r'(?:HTTP\s+)?(\d{3})(?:[\s:]|$)'
     matches = re.findall(http_error_pattern, error_message, re.IGNORECASE)
 
     for match in matches:
