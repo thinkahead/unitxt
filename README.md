@@ -150,6 +150,45 @@ print("Global Results:\n", results.global_scores.summary)
 print("Instance Results:\n", results.instance_scores.summary)
 ```
 
+# Retry Mechanism
+
+Unitxt includes built-in retry logic for transient failures during dataset loading and model inference.
+
+## Dataset Loading (`load_dataset`)
+
+Calls to `load_dataset` are retried up to 10 times with a 10-second delay when a transient error is detected. The following are treated as retryable:
+
+- HTTP status codes >= 400 in the error message
+- Connection errors: `connection refused`, `connection reset`, `connection timed out`
+- Service errors: `upstream connect error`, `unavailable`, `remote connection failure`
+- Empty or null error responses (indicating a transient service failure)
+
+## WML Inference (WatsonX)
+
+Requests made through `WMLInferenceEngineGeneration` and `WMLInferenceEngineChat` are retried with a 10-second delay between attempts. Retryable patterns include:
+
+- Server errors (`status code: 5xx`)
+- `downstream_request_failed`
+- Connection-level failures (`connection refused`, `connection reset`, `unavailable`, etc.)
+
+The number of retries defaults to 3 and can be configured:
+
+```bash
+export UNITXT_MAX_CONNECTION_RETRIES=10
+```
+
+Or at runtime in Python:
+
+```python
+from unitxt.settings_utils import get_settings
+settings = get_settings()
+settings.max_connection_retries = 10
+```
+
+## General Network Operations
+
+A `retry_connection_with_exponential_backoff` decorator is applied to HuggingFace inference, metrics, and data loaders. It retries on `ConnectionError`, `TimeoutError`, and `HTTPError` with exponential backoff (doubling delay plus jitter). This is also controlled by `UNITXT_MAX_CONNECTION_RETRIES`.
+
 # Contributing
 
 Read the [contributing guide](./CONTRIBUTING.md) for details on how to contribute to Unitxt.

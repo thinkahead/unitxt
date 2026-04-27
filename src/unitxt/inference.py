@@ -53,14 +53,6 @@ from .settings_utils import get_constants, get_settings
 from .type_utils import isoftype
 from .utils import retry_connection_with_exponential_backoff
 
-try:
-    from ibm_watsonx_ai.wml_client_error import ApiRequestFailure
-
-    _wml_retry_exceptions = (ConnectionError, TimeoutError, ApiRequestFailure)
-except ImportError:
-    ApiRequestFailure = None
-    _wml_retry_exceptions = (ConnectionError, TimeoutError)
-
 constants = get_constants()
 settings = get_settings()
 logger = get_logger()
@@ -2475,10 +2467,6 @@ class WMLInferenceEngineGeneration(WMLInferenceEngineBase, WMLGenerationParamsMi
             "return_options": logprobs_return_options,
         }
 
-    @retry_connection_with_exponential_backoff(
-        backoff_factor=2,
-        retry_exceptions=_wml_retry_exceptions,
-    )
     def _send_requests(
         self,
         dataset: Union[List[Dict[str, Any]], Dataset],
@@ -2497,11 +2485,42 @@ class WMLInferenceEngineGeneration(WMLInferenceEngineBase, WMLGenerationParamsMi
 
         inputs: List[str] = [instance["source"] for instance in dataset]
 
-        results = self._model.generate(
-            prompt=inputs,
-            params=params,
-            concurrency_limit=self.concurrency_limit,
-        )
+        max_retries = settings.max_connection_retries
+        retry_delay = 10  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                results = self._model.generate(
+                    prompt=inputs,
+                    params=params,
+                    concurrency_limit=self.concurrency_limit,
+                )
+                break
+            except Exception as e:
+                error_message = str(e).lower()
+                is_retryable = any(
+                    pattern in error_message
+                    for pattern in [
+                        "status code: 5",
+                        "connection refused",
+                        "connection reset",
+                        "connect error",
+                        "upstream connect error",
+                        "unavailable",
+                        "connection timed out",
+                        "remote connection failure",
+                        "downstream_request_failed",
+                    ]
+                ) or isinstance(e, (ConnectionError, TimeoutError))
+
+                if is_retryable and attempt < max_retries - 1:
+                    logger.warning(
+                        f"WML generate failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    raise
 
         final_results = []
         for result, inp in zip(results, inputs):
@@ -2745,10 +2764,6 @@ class WMLInferenceEngineChat(WMLInferenceEngineBase, WMLChatParamsMixin):
 
         return results
 
-    @retry_connection_with_exponential_backoff(
-        backoff_factor=2,
-        retry_exceptions=_wml_retry_exceptions,
-    )
     def _send_requests(
         self,
         dataset: Union[List[Dict[str, Any]], Dataset],
@@ -2774,7 +2789,38 @@ class WMLInferenceEngineChat(WMLInferenceEngineBase, WMLChatParamsMixin):
             for message in self.to_messages(dataset[i])
         ]
 
-        responses = self._handle_async_requests(data, params)
+        max_retries = settings.max_connection_retries
+        retry_delay = 10  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                responses = self._handle_async_requests(data, params)
+                break
+            except Exception as e:
+                error_message = str(e).lower()
+                is_retryable = any(
+                    pattern in error_message
+                    for pattern in [
+                        "status code: 5",
+                        "connection refused",
+                        "connection reset",
+                        "connect error",
+                        "upstream connect error",
+                        "unavailable",
+                        "connection timed out",
+                        "remote connection failure",
+                        "downstream_request_failed",
+                    ]
+                ) or isinstance(e, (ConnectionError, TimeoutError))
+
+                if is_retryable and attempt < max_retries - 1:
+                    logger.warning(
+                        f"WML chat failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    raise
 
         results = []
         for inp, response in zip(data, responses):
