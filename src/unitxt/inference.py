@@ -3122,7 +3122,7 @@ class VLLMInferenceEngine(InferenceEngine, PackageRequirementsMixin, VLLMParamsM
         tp = os.getenv("VLLM_TP_SIZE", 1)
 
         # Retry logic for CUDA errors during vLLM initialization
-        max_retries = 10
+        max_retries = settings.max_connection_retries
         retry_delay = 10  # seconds
         logger = get_logger()
 

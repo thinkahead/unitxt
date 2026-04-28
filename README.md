@@ -171,18 +171,10 @@ Requests made through `WMLInferenceEngineGeneration` and `WMLInferenceEngineChat
 - `downstream_request_failed`
 - Connection-level failures (`connection refused`, `connection reset`, `unavailable`, etc.)
 
-The number of retries defaults to 3 and can be configured:
+The number of retries defaults to 10 and can be overridden via environment variable:
 
 ```bash
-export UNITXT_MAX_CONNECTION_RETRIES=10
-```
-
-Or at runtime in Python:
-
-```python
-from unitxt.settings_utils import get_settings
-settings = get_settings()
-settings.max_connection_retries = 10
+export UNITXT_MAX_CONNECTION_RETRIES=20
 ```
 
 ## General Network Operations
